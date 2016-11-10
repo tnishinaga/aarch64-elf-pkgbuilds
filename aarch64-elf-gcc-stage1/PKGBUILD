@@ -1,0 +1,103 @@
+# Maintainer: Toshifumi NISHINAGA <tnishinaga.dev+aur AT gmail.com>
+
+_target=aarch64-elf
+pkgname=$_target-gcc-stage1
+pkgver=6.2.0
+_islver=0.17.1
+pkgrel=1
+pkgdesc='The GNU Compiler Collection - cross compiler for ARM64 target'
+arch=(i686 x86_64)
+url='http://gcc.gnu.org/'
+license=(GPL LGPL FDL)
+depends=($_target-binutils libmpc zlib)
+makedepends=(gmp mpfr)
+options=(!emptydirs !strip)
+source=(ftp://ftp.gnu.org/gnu/gcc/gcc-${pkgver}/gcc-${pkgver}.tar.bz2
+        http://isl.gforge.inria.fr/isl-$_islver.tar.bz2)
+sha256sums=('9944589fc722d3e66308c0ce5257788ebd7872982a718aa2516123940671b7c5'
+            'd6307bf9a59514087abac3cbaab3d99393a0abb519354f7e7834a8c842310daa')
+
+if [ -n "$_snapshot" ]; then
+  _basedir=gcc-$_snapshot
+else
+  _basedir=gcc-$pkgver
+fi
+
+prepare() {
+  cd $_basedir
+
+  # link isl for in-tree builds
+  ln -sf ../isl-$_islver isl
+
+  echo $pkgver > gcc/BASE-VER
+
+  # hack! - some configure tests for header files using "$CPP $CPPFLAGS"
+  sed -i "/ac_cpp=/s/\$CPPFLAGS/\$CPPFLAGS -O2/" "$srcdir"/$_basedir/{libiberty,gcc}/configure
+
+  rm -rf $srcdir/gcc-build
+  mkdir $srcdir/gcc-build
+}
+
+build() {
+  cd $srcdir/gcc-build
+
+  export CFLAGS_FOR_TARGET='-O2 -pipe'
+
+  # unfortunately CXXFLAGS_FOR_TARGET is not honored https://gcc.gnu.org/bugzilla/show_bug.cgi?id=53579
+  #export CXXFLAGS_FOR_TARGET='-O2 -pipe'
+  export CXXFLAGS='-O2 -pipe'
+
+  $srcdir/$_basedir/configure \
+    --target=${_target} \
+    --prefix=/usr \
+    --with-sysroot=/usr/${_target} \
+    --libexecdir=/usr/lib \
+    --with-gnu-as \
+    --with-gnu-ld \
+    --with-python-dir=share/gcc-${_target} \
+    --with-newlib \
+    --with-isl \
+    --without-headers \
+    --without-included-gettext \
+    --enable-checking=release \
+    --enable-languages=c \
+    --disable-decimal-float \
+    --disable-gold \
+    --disable-libatomic \
+    --disable-libgcj \
+    --disable-libgomp \
+    --disable-libitm \
+    --disable-libquadmath \
+    --disable-libquadmath-support \
+    --disable-libsanitizer \
+    --disable-libssp \
+    --disable-libunwind-exceptions \
+    --disable-libvtv \
+    --disable-multilib \
+    --disable-nls \
+    --disable-shared \
+    --disable-threads \
+    --disable-werror \
+    --enable-plugin \
+    --enable-lto \
+    --enable-static
+
+  make
+}
+
+package() {
+  cd $srcdir/gcc-build
+
+  make DESTDIR="${pkgdir}" install -j1
+
+  # strip target binaries
+  find "$pkgdir"/usr/lib/gcc/$_target/$pkgver -type f -and \( -name \*.a -or -name \*.o \) -exec $_target-objcopy -R .comment -R .note -R .debug_info -R .debug_aranges -R .debug_pubnames -R .debug_pubtypes -R .debug_abbrev -R .debug_line -R .debug_str -R .debug_ranges -R .debug_loc '{}' \;
+
+  # strip host binaries
+  find "$pkgdir"/usr/bin/ "$pkgdir"/usr/lib/gcc/$_target/$pkgver -type f -and \( -executable \) -exec strip '{}' \;
+
+  # Remove files that conflict with host gcc package
+  rm -r "$pkgdir"/usr/share/man/man7
+  rm -r "$pkgdir"/usr/share/info
+  rm "$pkgdir"/usr/lib/libcc1.*
+}
